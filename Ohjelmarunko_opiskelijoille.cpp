@@ -522,7 +522,7 @@ const char* SEM_NAME = "/mySem";
 
 //OPISKELIJA: nykyinen main on näin yksinkertainen, tästä pitää muokata se rinnakkaisuuden pohja
 int main(){
-
+    //1/3) 1p + 1p
     int segment_id;
     const int size = sizeof(Shared) + sizeof(int) * KORKEUS * LEVEYS; // 
 
@@ -565,7 +565,7 @@ int main(){
     shmctl(segment_id, IPC_RMID, nullptr);
 
     std::cout << "Kaikki rotat ulkona!" << endl;
-
+    //2) 1p
     //käynnistetään kahdella eri säikeellä rotat liikkeelle
     std::thread t1(aloitaRotta);
     std::thread t2(aloitaRotta);
