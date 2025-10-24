@@ -24,6 +24,7 @@
 #include <sys/wait.h>
 #include <semaphore.h>
 #include <pthread.h> //pthread perussäiemäärittelyt
+#include <thread>
 using namespace std;
 
 //kaikkialla tarvittavat tunnisteet  määritellään globaalilla alueella
@@ -39,6 +40,7 @@ using namespace std;
 //definet voi jättää globaalille alueelle, ne on sitten tiedossa koko tiedostossa
 #define KORKEUS 100 //rivien määrä alla
 #define LEVEYS 100 //sarakkaiden määrä alla
+    //int (*labyrintti)[LEVEYS];
 int labyrintti[KORKEUS][LEVEYS] = {
     {1,3,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
     {1,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,2,0,2,0,0,0,0,1,0,0,0,1,0,0,0,1,0,0,2,0,0,0,0,0,0,1,0,0,0,1,0,0,0,0,0,0,2,0,0,1,0,0,0,1,0,0,2,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,1,0,0,0,1,0,0,0,1,1},
@@ -427,7 +429,7 @@ LiikkumisSuunta doRistaus(Sijainti risteyssijainti, LiikkumisSuunta prevDir, aut
 int aloitaRotta(){
     int liikkuCount=0;
     vector<Ristaus> reitti; //pinona käytettävä rotan kulkema reitti (pinossa kuljetut risteykset)
-    Sijainti rotanSijainti = findBegin(); //hae labyrintin alku
+    Sijainti rotanSijainti = findBegin(); //hae labyrintin amlku
     LiikkumisSuunta prevDir {DEFAULT}; //edellinen suunta:jottei kuljeta edestakaisin vahingossa
     LiikkumisSuunta nextDir {DEFAULT}; //seuraava suunta
     //pyöri labyrintissa kunnes ulostulo on löytynyt
@@ -509,11 +511,73 @@ int aloitaRotta(){
     return liikkuCount;
 }
 
+struct Shared {
+    int counter;
+    int *labyrintti[KORKEUS][LEVEYS];
+};
+
+const char* SEM_NAME = "/mySem";
+
+
+
 //OPISKELIJA: nykyinen main on näin yksinkertainen, tästä pitää muokata se rinnakkaisuuden pohja
 int main(){
-    aloitaRotta();
+
+    int segment_id;
+    const int size = sizeof(Shared) + sizeof(int) * KORKEUS * LEVEYS; // 
+
+    segment_id = shmget(IPC_PRIVATE, size, S_IRUSR | S_IWUSR);
+    Shared* memoryPointer {nullptr}; // pointer jolla osoitetaan muistiin parentissa
+    memoryPointer = (Shared*) shmat(segment_id, nullptr, 0); // annetaan jaettu muisti parentin käyttöön kiinnittämällä pointteri
+    int (*labyrintti)[LEVEYS] = (int (*)[LEVEYS]) (memoryPointer + 1); // pointteri labyrinttiin jaetussa muistissa
+    
+    const int N = 5;
+
+    sem_unlink(SEM_NAME);
+    sem_t* sem = sem_open(SEM_NAME, O_CREAT | O_EXCL, 0666, 1);
+    if (sem == SEM_FAILED) { perror("sem_open"); return 1; }
+
+    //luodaan lapsiprosessit ja käynnistetään rotat
+    for (int i = 0; i < N; ++i) {
+        pid_t pid = fork();
+        if (pid == -1) { perror("fork"); return 1; }
+        if (pid == 0) {
+            Shared* lapsiPointer {nullptr};
+            lapsiPointer = (Shared*) shmat (segment_id, NULL, 0); //pointer jolla osoitetaan muistiin lapsessa
+            int (*lapsiLabyrintti)[LEVEYS] = (int (*)[LEVEYS]) (lapsiPointer + 1); // lapsen pointteri labyrinttiin
+            labyrintti = lapsiLabyrintti;
+            
+            aloitaRotta();
+            
+            // lapsi sulkee kuvaajan
+            sem_close(sem); 
+            shmdt(lapsiPointer);
+            return 0;
+        }
+    }
+
+    //odota lapsiprosessit
+    for (int i = 0; i < N; ++i) wait(nullptr);
+
+    // Otetaan jaettu muisti pois jaosta
+    shmdt(memoryPointer);
+    // Poistetaan jaettu muisti
+    shmctl(segment_id, IPC_RMID, nullptr);
+
+    std::cout << "Kaikki rotat ulkona!" << endl;
+
+    //käynnistetään kahdella eri säikeellä rotat liikkeelle
+    std::thread t1(aloitaRotta);
+    std::thread t2(aloitaRotta);
+    
+    //odotetaan että säikeet valmistuvat
+    t1.join();
+    t2.join();
+    
+
     //tämän tulee kertoa että kaikki rotat ovat päässeet ulos labyrintista
     //viimeinen jäädytetty kuva sijaintikartasta olisi hyvä olla todistamassa sitä
-    std::cout << "Kaikki rotat ulkona!" << endl;
+    std::cout << "Kaikki säikeiden rotat ulkona!" << endl;
     return 0;
 }
+
